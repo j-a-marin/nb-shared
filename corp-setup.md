@@ -3,59 +3,69 @@ _created: 2026-03-13_
 
 ---
 
+## philosophy
+
+`shared:` notebook is a **public** GitHub repo.
+Zero auth required to clone. No SSH keys, no tokens, no PATs.
+
+Rules:
+- never put personal info, keys, credentials, or sensitive research here
+- inspect before you sync: `nb shared:show <id> --print` → `nb shared:sync`
+- `home:` stays local-only on each machine, never touches GitHub
+
+---
+
 ## install sequence
 
 ```bash
 brew install nb bash zellij
-# nb       — notes vault, no API key needed
-# bash     — kills nb's bash version warning
-# zellij   — terminal multiplexer
-# NO llm   — needs personal API key, skip on corp
+# NO llm — needs personal API key, skip on corp
 ```
 
-## claude cli — SSO auth (no API key needed)
+## claude cli — SSO auth
 
 ```bash
 brew install node
 npm install -g @anthropic-ai/claude-code
 claude /login
 # opens browser → corp SSO → done
-# never set ANTHROPIC_API_KEY on corp machine
 ```
 
-## nb shared notebook — one-time setup
+## nb shared notebook — HTTPS, no auth needed
 
 ```bash
 nb init
-nb notebooks add shared git@github.com:j-a-marin/nb-shared.git
+nb notebooks add shared https://github.com/j-a-marin/nb-shared.git
 nb shared:sync
-# verify:
 nb shared:list
 ```
 
-SSH key for GitHub — if corp machine doesn't have one:
-```bash
-ssh-keygen -t ed25519 -C "corp-nb-sync"
-cat ~/.ssh/id_ed25519.pub   # add to github.com → Settings → SSH keys
-ssh -T git@github.com       # verify
-```
+That's it. No SSH key. No token. Pulls and pushes over HTTPS anonymously for reads.
 
-## zshrc — corp-safe section (no llm references)
+> **Note on push from corp:** HTTPS pushes still need auth.
+> For read-only access from corp, HTTPS works anonymously.
+> To push from corp, use a fine-grained PAT scoped to this repo only:
+> https://github.com/settings/tokens?type=beta
+> Then: `git remote set-url origin https://j-a-marin:<TOKEN>@github.com/j-a-marin/nb-shared.git`
+> Or just treat corp as read-only — capture notes locally, sync from personal Mac.
 
-Copy only this block from personal ~/.zshrc to corp ~/.zshrc.
-DO NOT copy llm-snap, llm-log-on, llm-log-off (require personal API key).
+---
+
+## zshrc — corp-safe section
+
+Copy only this block. Skip everything llm-related.
 
 ```zsh
 # ============================================
-# NB — Insight Capture (corp-safe, no llm)
+# NB — Insight Capture (corp-safe)
 # ============================================
 
 nb-insight() {
-  local title="" open_editor=0 notebook="shared"  # default: shared on corp
+  local title="" open_editor=0 notebook="shared"
   for arg in "$@"; do
     case "$arg" in
       -e) open_editor=1 ;;
-      -p) notebook="home" ;;   # -p (personal) flag for home: notebook
+      -p) notebook="home" ;;
       *)  title="$arg" ;;
     esac
   done
@@ -85,7 +95,7 @@ nb-insight() {
 }
 
 nb-thread() {
-  local title="" notebook="shared"  # default: shared on corp
+  local title="" notebook="shared"
   for arg in "$@"; do
     case "$arg" in
       -p) notebook="home" ;;
@@ -113,7 +123,6 @@ nb-thread() {
     printf "\n---\n\n_appended: %s_\n\n%s\n" "$stamp" "$body" >> "$last"
     echo "✅ Appended → $(basename $last)"
     echo "   nvim $last"
-    [[ "$notebook" == "shared" ]] && echo "   (run 'nb shared:sync' to push)"
     return 0
   fi
 
@@ -131,29 +140,28 @@ nb-thread() {
 
 alias nbsync='nb shared:sync'
 alias nbhelp='echo "
-corp nb commands (shared: is default notebook):
-  nb-insight [title]       snapshot → shared:
-  nb-insight [title] -p    snapshot → home: (personal, local only)
-  nb-thread  <title>       start/append thread → shared:
-  nb-thread  <title> -p    start/append thread → home:
-  nb-thread                append to last thread
-  nbsync                   push/pull shared notebook
+corp nb (shared: default):
+  nb-insight [title]     snapshot → shared:
+  nb-insight [title] -p  snapshot → home: (local only)
+  nb-thread  <title>     start/append thread → shared:
+  nb-thread              append to last thread
+  nbsync                 push/pull shared
 
-from claude cli (SSO):
+from claude cli:
   !nb-insight \"title\"
   !nb-thread  \"title\"
   !nbsync
 "'
 ```
 
-## key difference from personal machine
+---
 
-| | personal Mac | corp laptop |
+## key differences personal ↔ corp
+
+| | personal Mac | corp |
 |---|---|---|
 | default notebook | `home:` | `shared:` |
-| `llm` available | yes | no |
-| `llm-snap` | yes | no |
-| `nb-insight` | yes | yes |
-| `nb-thread` | yes | yes |
-| `nb shared:sync` | yes | yes |
-| claude cli auth | API key | SSO (`claude /login`) |
+| push auth | SSH key | HTTPS PAT (or read-only) |
+| `llm` / `llm-snap` | yes | no |
+| `nb-insight` / `nb-thread` | yes | yes |
+| claude auth | `ANTHROPIC_API_KEY` | SSO `claude /login` |
