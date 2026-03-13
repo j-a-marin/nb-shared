@@ -1,17 +1,15 @@
 # corp laptop setup
 _created: 2026-03-13_
+_updated: 2026-03-13 — read-only enforced_
 
 ---
 
 ## philosophy
 
-`shared:` notebook is a **public** GitHub repo.
-Zero auth required to clone. No SSH keys, no tokens, no PATs.
-
-Rules:
-- never put personal info, keys, credentials, or sensitive research here
-- inspect before you sync: `nb shared:show <id> --print` → `nb shared:sync`
-- `home:` stays local-only on each machine, never touches GitHub
+`shared:` is a **public, read-only** notebook on corp.
+- Pull research/context from personal Mac → corp
+- Never push corp work to GitHub (NDA)
+- `home:` is local-only on each machine, never leaves the device
 
 ---
 
@@ -19,7 +17,6 @@ Rules:
 
 ```bash
 brew install nb bash zellij
-# NO llm — needs personal API key, skip on corp
 ```
 
 ## claude cli — SSO auth
@@ -27,45 +24,52 @@ brew install nb bash zellij
 ```bash
 brew install node
 npm install -g @anthropic-ai/claude-code
-claude /login
-# opens browser → corp SSO → done
+<YOUR_CORP_SSO_COMMAND_HERE>
 ```
 
-## nb shared notebook — HTTPS, no auth needed
+---
+
+## nb shared notebook — read-only HTTPS
 
 ```bash
 nb init
 nb notebooks add shared https://github.com/j-a-marin/nb-shared.git
 nb shared:sync
-nb shared:list
+
+# CRITICAL: immediately lock the remote to read-only
+# This prevents any accidental push from corp
+cd ~/.nb/shared
+git remote set-url --push origin NO_PUSH
 ```
 
-That's it. No SSH key. No token. Pulls and pushes over HTTPS anonymously for reads.
+That last line is the safeguard. Any attempt to push — from nb, from git, from anything — will fail immediately with `fatal: 'NO_PUSH' does not appear to be a git repository`. Pulls still work fine.
 
-> **Note on push from corp:** HTTPS pushes still need auth.
-> For read-only access from corp, HTTPS works anonymously.
-> To push from corp, use a fine-grained PAT scoped to this repo only:
-> https://github.com/settings/tokens?type=beta
-> Then: `git remote set-url origin https://j-a-marin:<TOKEN>@github.com/j-a-marin/nb-shared.git`
-> Or just treat corp as read-only — capture notes locally, sync from personal Mac.
+Verify it's locked:
+```bash
+cd ~/.nb/shared && git remote -v
+# origin  https://github.com/j-a-marin/nb-shared.git (fetch)
+# origin  NO_PUSH (push)   ← this is correct
+```
 
 ---
 
 ## zshrc — corp-safe section
 
-Copy only this block. Skip everything llm-related.
+
+Copy only this block. No llm references.
 
 ```zsh
 # ============================================
-# NB — Insight Capture (corp-safe)
+# NB — Insight Capture (corp — home: only)
 # ============================================
+# On corp: nb-insight and nb-thread write to home: ONLY
+# shared: is read-only (pull from personal Mac, never push)
 
 nb-insight() {
-  local title="" open_editor=0 notebook="shared"
+  local title="" open_editor=0
   for arg in "$@"; do
     case "$arg" in
       -e) open_editor=1 ;;
-      -p) notebook="home" ;;
       *)  title="$arg" ;;
     esac
   done
@@ -84,24 +88,17 @@ nb-insight() {
   printf "# %s\n_captured: %s_\n\n---\n\n%s\n" \
     "$title" "$(date '+%Y-%m-%d %H:%M')" "$body" > "$tmpfile"
 
-  cat "$tmpfile" | nb ${notebook}:add --filename "${title}.md"
+  cat "$tmpfile" | nb home:add --filename "${title}.md"
   rm "$tmpfile"
 
-  local notepath="$HOME/.nb/${notebook}/${title}.md"
-  echo "✅ ${notebook}: ${title}.md"
-  echo "   nvim $notepath"
-  [[ "$notebook" == "shared" ]] && echo "   (run 'nb shared:sync' to push)"
-  (( open_editor )) && nvim "$notepath"
+  echo "✅ home: ${title}.md"
+  echo "   nvim $HOME/.nb/home/${title}.md"
+  (( open_editor )) && nvim "$HOME/.nb/home/${title}.md"
 }
 
 nb-thread() {
-  local title="" notebook="shared"
-  for arg in "$@"; do
-    case "$arg" in
-      -p) notebook="home" ;;
-      *)  title="$arg" ;;
-    esac
-  done
+  local title=""
+  [[ "$1" != "-"* ]] && title="$1"
 
   local tmpfile=$(mktemp /tmp/nb-thread-XXXXXX.md)
   if [[ -n "$ZELLIJ" ]]; then
@@ -116,17 +113,16 @@ nb-thread() {
   local stamp="$(date '+%Y-%m-%d %H:%M')"
 
   if [[ -z "$title" ]]; then
-    local last=$(ls -t "$HOME/.nb/${notebook}/"thread-*.md 2>/dev/null | head -1)
+    local last=$(ls -t "$HOME/.nb/home/"thread-*.md 2>/dev/null | head -1)
     if [[ -z "$last" ]]; then
       echo "❌ No existing thread. Provide a title to start one."; return 1
     fi
     printf "\n---\n\n_appended: %s_\n\n%s\n" "$stamp" "$body" >> "$last"
     echo "✅ Appended → $(basename $last)"
-    echo "   nvim $last"
     return 0
   fi
 
-  local notepath="$HOME/.nb/${notebook}/thread-${title}.md"
+  local notepath="$HOME/.nb/home/thread-${title}.md"
   if [[ -f "$notepath" ]]; then
     printf "\n---\n\n_appended: %s_\n\n%s\n" "$stamp" "$body" >> "$notepath"
     echo "✅ Appended → thread-${title}.md"
@@ -135,22 +131,25 @@ nb-thread() {
     echo "✅ Created  → thread-${title}.md"
   fi
   echo "   nvim $notepath"
-  [[ "$notebook" == "shared" ]] && echo "   (run 'nb shared:sync' to push)"
 }
 
-alias nbsync='nb shared:sync'
+# Pull latest shared: context from personal Mac
+alias nbpull='nb shared:sync && nb shared:list'
+
 alias nbhelp='echo "
-corp nb (shared: default):
-  nb-insight [title]     snapshot → shared:
-  nb-insight [title] -p  snapshot → home: (local only)
-  nb-thread  <title>     start/append thread → shared:
-  nb-thread              append to last thread
-  nbsync                 push/pull shared
+corp nb:
+  nb-insight [title]   snapshot → home: (local only, never leaves corp)
+  nb-thread  <title>   start/append thread → home:
+  nb-thread            append to last thread
+  nbpull               pull latest from shared: (read-only)
+
+  shared: is READ-ONLY on corp — git push is permanently disabled.
+  All captures go to home: which stays on this machine.
 
 from claude cli:
   !nb-insight \"title\"
   !nb-thread  \"title\"
-  !nbsync
+  !nbpull
 "'
 ```
 
@@ -160,8 +159,9 @@ from claude cli:
 
 | | personal Mac | corp |
 |---|---|---|
-| default notebook | `home:` | `shared:` |
-| push auth | SSH key | HTTPS PAT (or read-only) |
+| `nb-insight` default | `home:` | `home:` (stays local) |
+| `shared:` push | yes | **disabled at git level** |
+| `shared:` pull | yes | yes |
 | `llm` / `llm-snap` | yes | no |
-| `nb-insight` / `nb-thread` | yes | yes |
-| claude auth | `ANTHROPIC_API_KEY` | SSO `claude /login` |
+| claude auth | API key | corp SSO |
+| NDA risk | n/a | zero — nothing leaves device |
