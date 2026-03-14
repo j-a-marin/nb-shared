@@ -13,7 +13,12 @@ _created: 2026-03-13_
 ## step 1 — connect shared: (read-only, no SSH key needed)
 
 ```bash
-nb init
+# nb init only if nb has NEVER been run on this machine before
+# if home: already exists, skip nb init entirely — it will clobber it
+nb notebooks list   # check first — if you see 'home', skip nb init
+
+nb init             # ONLY if output above was empty / command not found
+
 nb notebooks add shared https://github.com/j-a-marin/nb-shared.git
 nb shared:sync
 ```
